@@ -185,17 +185,20 @@ const LiveChat = ({ streamId, userId, userName = 'Guest' }) => {
     
     if (!newComment.trim() || !isConnected || !streamId) return;
     
-    // Use the socket utility function to send comment
-    emitComment(streamId, userId || 'guest_user', userName || 'Guest', newComment.trim());
+    console.log(`Attempting to send comment to stream ID: ${streamId}`);
+    console.log(`User ID: ${userId || 'guest_user'}, User Name: ${userName || 'Guest'}`);
     
-    // Add comment to local state for immediate feedback
-    setComments(prevComments => [...prevComments, {
-      id: `local-${Date.now()}`,
-      userName: userName || 'You',
-      message: newComment.trim(),
-      timestamp: new Date(),
-      isLocal: true
-    }]);
+    // Use the socket utility function to send comment
+    emitComment(
+      streamId, 
+      userId || 'guest_user', 
+      userName || 'Guest', 
+      newComment.trim()
+    );
+    
+    // IMPORTANT: We're NOT adding to local state immediately anymore
+    // The comment will be added when it comes back from the server via socket
+    // This prevents duplicate comments (one from local state, one from server)
     
     // Clear the input
     setNewComment('');
@@ -230,7 +233,10 @@ const LiveChat = ({ streamId, userId, userName = 'Guest' }) => {
           comments.map((comment) => (
             <div 
               key={comment.id} 
-              className={`comment ${comment.isSystemMessage ? 'system-message' : ''} ${comment.isLocal ? 'local-comment' : ''}`}
+              className={`comment ${comment.isSystemMessage ? 'system-message' : ''} ${
+                // Determine if it's the local user's comment (only for socket-received comments)
+                comment.userName === userName || comment.userId === userId ? 'local-comment' : ''
+              }`}
             >
               {!comment.isSystemMessage && (
                 <div className="comment-user">
