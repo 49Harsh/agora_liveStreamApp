@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agora Live Streaming Test</title>
+    <!-- WebRTC permissions and optimization meta tags -->
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta name="robots" content="noindex">
+    <meta http-equiv="origin-trial" content="">
+    <meta http-equiv="Permissions-Policy" content="camera=*, microphone=*, display-capture=*">
+    <style>
+      /* Force hardware acceleration for video rendering */
+      video {
+        transform: translateZ(0);
+        backface-visibility: hidden;
+        perspective: 1000;
+        will-change: transform;
+      }
+      /* Style to prevent autoplay confirmation dialogs in Safari */
+      .video-container {
+        position: relative;
+        overflow: hidden;
+        z-index: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
