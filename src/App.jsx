@@ -1,10 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import AgoraRTC from 'agora-rtc-sdk-ng';
 import './App.css';
 import LiveChat from './components/LiveChat';
 import './components/LiveChat.css';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+import { 
+  initializeSocket, 
+  joinStream as emitJoinStream, 
+  leaveStream as emitLeaveStream,
+  addStreamEndListener,
+  removeStreamEndListener
+} from './socketConfig';
 
-const BACKEND_URL = 'https://api.vedaz.io'; // Updated to the correct backend URL
+// const BACKEND_URL = 'https://api.vedaz.io'; // Updated to the correct backend URL
+const BACKEND_URL = 'http://localhost:5050';
 
 const App = () => {
   const appId = '9b8eb3c1d1eb4e35abdb4c9268bd2d16';
@@ -20,8 +30,32 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [currentStreamId, setCurrentStreamId] = useState('');
   const [userId, setUserId] = useState(''); // For testing, in a real app this would come from authentication
+  
+  // Refs for timers and stream checking
+  const refreshIntervalRef = useRef(null);
+  const currentStreamRef = useRef(null);
 
   useEffect(() => {
+    // Initialize socket connection
+    initializeSocket();
+    
+    // Setup socket event listeners
+    addStreamEndListener((data) => {
+      console.log("Socket: Astrologer ended stream", data);
+      toast.info(`${data.message || 'Live stream has ended'}`, {
+        position: 'top-center',
+        autoClose: 5000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
+      
+      // Force leave channel as stream has ended
+      leaveChannel();
+      fetchLiveStreams(); // Refresh the streams list
+    });
+
     const init = async () => {
       const agoraClient = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
       setClient(agoraClient);
@@ -54,8 +88,26 @@ const App = () => {
       agoraClient.on('user-left', (user) => {
         console.log('user left', user);
         setRemoteUsers(prevUsers => {
-          return prevUsers.filter(u => u.uid !== user.uid);
+          const updated = prevUsers.filter(u => u.uid !== user.uid);
+          console.log(`Remote users after user left: ${updated.length}`);
+          
+          // If no remote users are left after this user left, handle stream ending
+          if (updated.length === 0 && prevUsers.length > 0) {
+            console.log('Last broadcaster left, handling stream end');
+            // Use setTimeout to ensure state update completes
+            setTimeout(() => handleStreamEnded(), 500);
+          }
+          return updated;
         });
+      });
+
+      // Add connection state change handler
+      agoraClient.on('connection-state-change', (curState, prevState) => {
+        console.log(`Connection state changed from ${prevState} to ${curState}`);
+        if (curState === 'DISCONNECTED' && joinState) {
+          console.log('Disconnected from stream');
+          handleStreamEnded();
+        }
       });
     };
 
@@ -64,15 +116,122 @@ const App = () => {
 
     return () => {
       // Cleanup
+      removeStreamEndListener();
       if (localAudioTrack) {
         localAudioTrack.close();
       }
       if (localVideoTrack) {
         localVideoTrack.close();
       }
-      client?.leave();
+      if (client) {
+        try {
+          client.leave();
+        } catch (err) {
+          console.log('Error leaving channel:', err);
+        }
+      }
+      
+      // Clear any intervals
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+      }
     };
   }, []);
+  
+  // Setup and clear stream refresh interval when join state changes
+  useEffect(() => {
+    if (joinState && currentStreamId) {
+      // Save current stream id to ref for interval access
+      currentStreamRef.current = currentStreamId;
+      
+      // Set up interval to check if the current stream is still active
+      refreshIntervalRef.current = setInterval(async () => {
+        console.log('Checking if stream is still active...');
+        checkCurrentStreamStatus();
+      }, 10000); // Check every 10 seconds
+      
+      return () => {
+        if (refreshIntervalRef.current) {
+          clearInterval(refreshIntervalRef.current);
+          refreshIntervalRef.current = null;
+        }
+      };
+    }
+  }, [joinState, currentStreamId]);
+  
+  // Function to check if current stream is still active
+  const checkCurrentStreamStatus = async () => {
+    if (!currentStreamRef.current) return;
+    
+    try {
+      console.log('Checking stream status from backend...');
+      
+      // First, try to get stream by ID which is the most reliable method
+      try {
+        const response = await fetch(`${BACKEND_URL}/api/streams/${currentStreamRef.current}`);
+        
+        if (response.ok) {
+          const streamData = await response.json();
+          console.log('Current stream status by ID:', streamData);
+          
+          // If stream is no longer live or has endedAt set, handle stream ended
+          if (!streamData.isLive || streamData.endedAt) {
+            console.log('Stream is no longer active according to backend');
+            handleStreamEnded();
+            return;
+          }
+        } else {
+          console.log(`Stream status check by ID failed: ${response.status}`);
+        }
+      } catch (idError) {
+        console.error('Error checking stream by ID:', idError);
+      }
+      
+      // If we don't have a stream ID or the first check failed, try by channel ID
+      if (channelName) {
+        try {
+          const response = await fetch(`${BACKEND_URL}/api/streams?channelId=${channelName}&isLive=true`);
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log('Stream status by channelId:', data);
+            
+            // If no active streams are found for this channel, it has ended
+            if (!data.streams || data.streams.length === 0) {
+              console.log('No active streams found for this channel');
+              handleStreamEnded();
+              return;
+            }
+          }
+        } catch (channelError) {
+          console.error('Error checking stream by channel:', channelError);
+        }
+      }
+      
+      // If we're showing a stream but have no remote users for more than 10 seconds
+      // (and we've been connected for a while), consider it ended
+      if (joinState && remoteUsers.length === 0) {
+        console.log('Connected but no remote users - may have ended');
+        // Add a counter for empty stream time if needed
+      }
+    } catch (error) {
+      console.error('General error checking stream status:', error);
+    }
+  };
+
+  const handleStreamEnded = () => {
+    toast.info('Your live stream has ended', {
+      position: 'top-center',
+      autoClose: 5000,
+      hideProgressBar: false,
+      closeOnClick: true,
+      pauseOnHover: true,
+      draggable: true,
+    });
+    
+    leaveChannel();
+    fetchLiveStreams(); // Refresh the streams list
+  };
 
   const fetchLiveStreams = async () => {
     try {
@@ -82,8 +241,18 @@ const App = () => {
         throw new Error('Failed to fetch livestreams');
       }
       const data = await response.json();
-      console.log('Live streams:', data);
-      setLiveStreams(data.streams || []);
+      console.log('Live streams response:', data);
+      
+      // Double-check stream status - only show those that are explicitly marked as active
+      // Filter out any streams with endedAt set
+      const currentTime = new Date();
+      const activeStreams = data.streams?.filter(stream => {
+        return stream.isLive === true && 
+               (!stream.endedAt || new Date(stream.endedAt) > currentTime);
+      }) || [];
+      
+      console.log(`Filtered ${activeStreams.length} active streams from ${data.streams?.length || 0} total`);
+      setLiveStreams(activeStreams);
       setLoading(false);
     } catch (error) {
       console.error('Error fetching live streams:', error);
@@ -140,6 +309,9 @@ const App = () => {
       setJoinState(true);
       console.log('Joined channel successfully');
       
+      // Notify via socket that we're joining this stream
+      emitJoinStream(stream.channelId, userId || 'guest_viewer');
+      
       // Update view count
       if (stream._id) {
         try {
@@ -180,6 +352,9 @@ const App = () => {
       setJoinState(true);
       console.log('Joined channel successfully');
       
+      // Notify via socket that we're joining this stream
+      emitJoinStream(channelName, userId || 'guest_viewer');
+      
       // We might not have a streamId when joining manually, but we can try to find it
       try {
         const response = await fetch(`${BACKEND_URL}/api/streams?channelId=${channelName}`);
@@ -201,12 +376,25 @@ const App = () => {
   const leaveChannel = async () => {
     if (!client) return;
     
-    // Leave the channel
-    await client.leave();
-    setRemoteUsers([]);
-    setJoinState(false);
-    setCurrentStreamId(''); // Clear the current stream ID
-    console.log('Left channel successfully');
+    try {
+      // Notify that we're leaving the stream via socket
+      if (channelName) {
+        emitLeaveStream(channelName, userId || 'guest_viewer');
+      }
+      
+      // Leave the channel
+      await client.leave();
+      setRemoteUsers([]);
+      setJoinState(false);
+      setCurrentStreamId(''); // Clear the current stream ID
+      console.log('Left channel successfully');
+    } catch (error) {
+      console.error('Error leaving channel:', error);
+      // Still update UI state
+      setRemoteUsers([]);
+      setJoinState(false);
+      setCurrentStreamId('');
+    }
   };
 
   // For testing, let's simulate a login/logout
@@ -324,7 +512,9 @@ const App = () => {
               </div>
             ))
           ) : joinState ? (
-            <div className="waiting-message">Waiting for livestream...</div>
+            <div className="waiting-message">
+              {errorMsg ? `Error: ${errorMsg}` : 'Waiting for livestream...'}
+            </div>
           ) : (
             <div className="instructions">
               <p>Select a live stream from above or enter a channel name manually to join.</p>
@@ -343,6 +533,8 @@ const App = () => {
           </div>
         )}
       </div>
+
+      <ToastContainer />
     </div>
   );
 };
