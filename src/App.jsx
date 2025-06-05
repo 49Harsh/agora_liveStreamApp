@@ -7,10 +7,13 @@ import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { 
   initializeSocket, 
+  getSocket,
   joinStream as emitJoinStream, 
   leaveStream as emitLeaveStream,
   addStreamEndListener,
-  removeStreamEndListener
+  removeStreamEndListener,
+  addViewerCountListener,
+  addUserJoinedListener
 } from './socketConfig';
 
 // const BACKEND_URL = 'https://api.vedaz.io'; // Updated to the correct backend URL
@@ -30,6 +33,8 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [currentStreamId, setCurrentStreamId] = useState('');
   const [userId, setUserId] = useState(''); // For testing, in a real app this would come from authentication
+  const [viewerCount, setViewerCount] = useState(0);
+  const [totalViews, setTotalViews] = useState(0);
   
   // Refs for timers and stream checking
   const refreshIntervalRef = useRef(null);
@@ -40,7 +45,7 @@ const App = () => {
     initializeSocket();
     
     // Setup socket event listeners
-    addStreamEndListener((data) => {
+    const removeStreamEndListener = addStreamEndListener((data) => {
       console.log("Socket: Astrologer ended stream", data);
       toast.info(`${data.message || 'Live stream has ended'}`, {
         position: 'top-center',
@@ -54,6 +59,26 @@ const App = () => {
       // Force leave channel as stream has ended
       leaveChannel();
       fetchLiveStreams(); // Refresh the streams list
+    });
+
+    // Add viewer count listener
+    const removeViewerCountListener = addViewerCountListener((data) => {
+      console.log("Socket: Viewer count update", data);
+      
+      // Update viewer count if this is for our current channel
+      if (data.channelId === channelName) {
+        console.log(`Updating view count UI: active=${data.activeViewers}, total=${data.totalViews}`);
+        setViewerCount(data.activeViewers || 0);
+        setTotalViews(data.totalViews || 0);
+      } else {
+        console.log(`Ignoring view count for different channel: ${data.channelId} (our channel: ${channelName})`);
+      }
+    });
+    
+    // Add user joined listener
+    const removeUserJoinedListener = addUserJoinedListener((data) => {
+      console.log("Socket: User joined stream", data);
+      // No need to update counts here as the viewerCount event will handle that
     });
 
     const init = async () => {
@@ -117,6 +142,9 @@ const App = () => {
     return () => {
       // Cleanup
       removeStreamEndListener();
+      removeViewerCountListener();
+      removeUserJoinedListener();
+      
       if (localAudioTrack) {
         localAudioTrack.close();
       }
@@ -138,16 +166,39 @@ const App = () => {
     };
   }, []);
   
+  // Add function to fetch current viewer counts from API
+  const fetchViewerCount = async (streamId) => {
+    if (!streamId) return;
+    
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/streams/${streamId}/viewers`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Viewer count from API:', data);
+        setViewerCount(data.activeViewers || 0);
+        setTotalViews(data.totalViews || 0);
+      }
+    } catch (error) {
+      console.error('Error fetching viewer count:', error);
+    }
+  };
+
   // Setup and clear stream refresh interval when join state changes
   useEffect(() => {
     if (joinState && currentStreamId) {
       // Save current stream id to ref for interval access
       currentStreamRef.current = currentStreamId;
       
+      // Fetch initial viewer count
+      fetchViewerCount(currentStreamId);
+      
       // Set up interval to check if the current stream is still active
       refreshIntervalRef.current = setInterval(async () => {
         console.log('Checking if stream is still active...');
         checkCurrentStreamStatus();
+        
+        // Also refresh viewer count periodically
+        fetchViewerCount(currentStreamId);
       }, 10000); // Check every 10 seconds
       
       return () => {
@@ -315,7 +366,7 @@ const App = () => {
       // Update view count
       if (stream._id) {
         try {
-          const response = await fetch(`${BACKEND_URL}/streams/${stream._id}/view`, {
+          const response = await fetch(`${BACKEND_URL}/api/streams/${stream._id}/view`, {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
@@ -426,6 +477,17 @@ const App = () => {
         </p>
       </div>
       
+      {/* Always show view counts (not conditioned on joinState) */}
+      <div className="view-counts">
+        <div className="live-count">
+          <span className="live-indicator"></span>
+          <span className="viewer-count">{viewerCount}</span> watching now
+        </div>
+        <div className="total-views">
+          <span>{totalViews}</span> total views
+        </div>
+      </div>
+      
       <div className="streams-section">
         <div className="section-header">
           <h2>Active Livestreams</h2>
@@ -523,10 +585,10 @@ const App = () => {
           )}
         </div>
         
-        {joinState && currentStreamId && (
+        {joinState && channelName && (
           <div className="chat-container">
             <LiveChat 
-              streamId={currentStreamId} 
+              streamId={channelName}
               userId={userId}
               userName={userId ? 'Test User' : 'Guest'}
             />

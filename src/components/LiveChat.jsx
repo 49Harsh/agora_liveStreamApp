@@ -1,118 +1,152 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { io } from 'socket.io-client';
+import React, { useState, useRef, useEffect } from 'react';
+import './LiveChat.css';
+import { 
+  initializeSocket, 
+  getSocket, 
+  sendComment as emitComment,
+  addCommentListener,
+  addViewerCountListener,
+  addUserJoinedListener,
+  addStreamEndListener
+} from '../socketConfig';
 
-const SOCKET_URL = 'https://api.vedaz.io:9000';
+// Define BACKEND_URL constant to match App.jsx
+const BACKEND_URL = 'http://localhost:5050';
 
 const LiveChat = ({ streamId, userId, userName = 'Guest' }) => {
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
-  const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
   const [totalViews, setTotalViews] = useState(0);
   const [recentJoins, setRecentJoins] = useState([]);
-  const [isLoggedIn, setIsLoggedIn] = useState(!!userId);
-  const [sessionId, setSessionId] = useState('');
-  
   const commentsEndRef = useRef(null);
 
   // Initialize socket connection
   useEffect(() => {
     if (!streamId) return;
     
-    // Initialize Socket.io connection
-    const socketInstance = io(SOCKET_URL, {
-      transports: ['websocket'],
-      autoConnect: true,
-    });
+    // Make sure socket is initialized
+    initializeSocket();
+    const socketInstance = getSocket();
     
-    setSocket(socketInstance);
-    
-    // Socket event listeners
-    socketInstance.on('connect', () => {
-      console.log('Socket connected');
-      setIsConnected(true);
+    if (socketInstance) {
+      setIsConnected(socketInstance.connected);
       
-      // Join the stream room
-      socketInstance.emit('joinStream', {
-        streamId,
-        userId,
-        sessionId: sessionId || undefined
-      });
-    });
-    
-    socketInstance.on('joinedStream', (data) => {
-      console.log('Joined stream:', data);
-      if (data.sessionId && !sessionId) {
-        setSessionId(data.sessionId);
-      }
-      setViewerCount(data.viewerCount);
-      setTotalViews(data.totalViews);
-    });
-    
-    socketInstance.on('viewerCount', (data) => {
-      console.log('Viewer count update:', data);
-      setViewerCount(data.count);
-      setTotalViews(data.totalViews);
-    });
-    
-    socketInstance.on('newComment', (comment) => {
-      console.log('New comment:', comment);
-      setComments(prevComments => [...prevComments, comment]);
-    });
-    
-    socketInstance.on('viewerJoined', (data) => {
-      console.log('Viewer joined:', data);
-      const joinMessage = {
-        _id: Date.now(),
-        isSystemMessage: true,
-        content: `${data.name} joined`,
-        timestamp: data.timestamp
+      // Setup connection event handlers
+      const onConnect = () => {
+        console.log('Socket connected');
+        setIsConnected(true);
       };
       
-      setComments(prevComments => [...prevComments, joinMessage]);
+      const onDisconnect = () => {
+        console.log('Socket disconnected');
+        setIsConnected(false);
+      };
       
-      // Add to recent joins with auto-remove after 5 seconds
-      setRecentJoins(prev => [...prev, { name: data.name, isGuest: data.isGuest }]);
+      socketInstance.on('connect', onConnect);
+      socketInstance.on('disconnect', onDisconnect);
+      
+      // Already connected?
+      if (socketInstance.connected) {
+        setIsConnected(true);
+      }
+      
+      return () => {
+        socketInstance.off('connect', onConnect);
+        socketInstance.off('disconnect', onDisconnect);
+      };
+    }
+  }, [streamId]);
+  
+  // Setup stream-specific event listeners and join stream
+  useEffect(() => {
+    if (!streamId || !isConnected) return;
+    
+    console.log(`Setting up listeners for stream: ${streamId}`);
+    
+    // Join the stream room
+    const socketInstance = getSocket();
+    socketInstance.emit('joinStream', { 
+      channelId: streamId,
+      userId: userId || 'web_guest_viewer',
+      userName: userName || 'Guest'
+    });
+    
+    // Add listener for viewer count updates
+    const removeViewerCountListener = addViewerCountListener((data) => {
+      console.log('Viewer count update:', data);
+      // Only update if this is for our channel
+      if (data.channelId === streamId) {
+        setViewerCount(data.activeViewers || 0);
+        setTotalViews(data.totalViews || 0);
+      }
+    });
+    
+    // Add listener for comments
+    const removeCommentListener = addCommentListener((comment) => {
+      console.log('New comment received:', comment);
+      setComments(prevComments => [...prevComments, {
+        id: comment.id || Date.now().toString(),
+        userName: comment.userName || 'User',
+        message: comment.message,
+        timestamp: comment.timestamp || new Date()
+      }]);
+    });
+    
+    // Add listener for user joined events
+    const removeUserJoinedListener = addUserJoinedListener((data) => {
+      console.log('User joined:', data);
+      // Add system message for join
+      setComments(prevComments => [...prevComments, {
+        id: `join-${Date.now()}`,
+        isSystemMessage: true,
+        message: `${data.userName || 'Someone'} joined`,
+        timestamp: data.timestamp || new Date()
+      }]);
+      
+      // Add to recent joins list with auto-remove
+      setRecentJoins(prev => [...prev, { 
+        name: data.userName || 'Someone', 
+        id: Date.now()
+      }]);
+      
       setTimeout(() => {
-        setRecentJoins(prev => prev.filter(join => join.name !== data.name));
+        setRecentJoins(prev => prev.filter(join => 
+          join.name !== (data.userName || 'Someone')
+        ));
       }, 5000);
     });
     
-    socketInstance.on('viewerLeft', (data) => {
-      console.log('Viewer left:', data);
-      setViewerCount(data.viewerCount);
-    });
-    
-    socketInstance.on('streamEnded', () => {
-      console.log('Stream ended');
-      const endMessage = {
-        _id: Date.now(),
+    // Add listener for stream end events
+    const removeStreamEndListener = addStreamEndListener((data) => {
+      console.log('Stream ended:', data);
+      // Add system message for stream end
+      setComments(prevComments => [...prevComments, {
+        id: `end-${Date.now()}`,
         isSystemMessage: true,
-        content: 'Live stream has ended',
+        message: 'Live stream has ended',
         timestamp: new Date()
-      };
-      
-      setComments(prevComments => [...prevComments, endMessage]);
-    });
-    
-    socketInstance.on('error', (error) => {
-      console.error('Socket error:', error);
-    });
-    
-    socketInstance.on('disconnect', () => {
-      console.log('Socket disconnected');
-      setIsConnected(false);
+      }]);
     });
     
     // Fetch existing comments for this stream
     const fetchComments = async () => {
       try {
-        const response = await fetch(`https://api.vedaz.io/api/streams/${streamId}/comments`);
+        console.log(`Fetching comments for stream: ${streamId}`);
+        const response = await fetch(`${BACKEND_URL}/api/streams/${streamId}/comments`);
+        
         if (response.ok) {
           const data = await response.json();
-          if (data.comments && Array.isArray(data.comments)) {
-            setComments(data.comments);
+          console.log('Fetched comments:', data);
+          
+          if (data.comments && Array.isArray(data.comments) && data.comments.length > 0) {
+            setComments(data.comments.map(comment => ({
+              id: comment.id || Date.now().toString(),
+              userName: comment.userName || 'User',
+              message: comment.message || comment.content,
+              timestamp: comment.timestamp || comment.createdAt || new Date()
+            })));
           }
         }
       } catch (error) {
@@ -124,37 +158,46 @@ const LiveChat = ({ streamId, userId, userName = 'Guest' }) => {
     
     // Cleanup function
     return () => {
-      if (socketInstance) {
-        socketInstance.emit('leaveStream');
-        socketInstance.disconnect();
-      }
+      // Leave the stream
+      socketInstance.emit('leaveStream', {
+        channelId: streamId,
+        userId: userId || 'web_guest_viewer'
+      });
+      
+      // Remove all listeners
+      removeViewerCountListener();
+      removeCommentListener();
+      removeUserJoinedListener();
+      removeStreamEndListener();
     };
-  }, [streamId, userId]);
+  }, [streamId, userId, userName, isConnected]);
   
   // Auto-scroll to the latest comment
   useEffect(() => {
-    commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (comments.length > 0) {
+      commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [comments]);
   
   // Send new comment
-  const sendComment = (e) => {
+  const handleSendComment = (e) => {
     e.preventDefault();
     
-    if (!newComment.trim() || !socket || !isConnected) return;
+    if (!newComment.trim() || !isConnected || !streamId) return;
     
-    if (!isLoggedIn) {
-      // Show login prompt
-      alert('Please login or register to comment');
-      return;
-    }
+    // Use the socket utility function to send comment
+    emitComment(streamId, userId || 'guest_user', userName || 'Guest', newComment.trim());
     
-    socket.emit('sendComment', {
-      streamId,
-      userId,
-      content: newComment.trim()
-    });
+    // Add comment to local state for immediate feedback
+    setComments(prevComments => [...prevComments, {
+      id: `local-${Date.now()}`,
+      userName: userName || 'You',
+      message: newComment.trim(),
+      timestamp: new Date(),
+      isLocal: true
+    }]);
     
-    // Clear the input (optimistic UI update)
+    // Clear the input
     setNewComment('');
   };
 
@@ -173,8 +216,8 @@ const LiveChat = ({ streamId, userId, userName = 'Guest' }) => {
         
         {recentJoins.length > 0 && (
           <div className="recent-joins">
-            {recentJoins.map((join, index) => (
-              <div key={index} className="join-notification">
+            {recentJoins.map((join) => (
+              <div key={join.id} className="join-notification">
                 {join.name} joined
               </div>
             ))}
@@ -184,21 +227,21 @@ const LiveChat = ({ streamId, userId, userName = 'Guest' }) => {
       
       <div className="comments-container">
         {comments.length > 0 ? (
-          comments.map(comment => (
+          comments.map((comment) => (
             <div 
-              key={comment._id} 
-              className={`comment ${comment.isSystemMessage ? 'system-message' : ''}`}
+              key={comment.id} 
+              className={`comment ${comment.isSystemMessage ? 'system-message' : ''} ${comment.isLocal ? 'local-comment' : ''}`}
             >
               {!comment.isSystemMessage && (
                 <div className="comment-user">
-                  {comment.user?.name || 'User'}:
+                  {comment.userName || 'User'}:
                 </div>
               )}
               <div className="comment-content">
-                {comment.content}
+                {comment.message}
               </div>
               <div className="comment-time">
-                {new Date(comment.createdAt || comment.timestamp).toLocaleTimeString()}
+                {new Date(comment.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
               </div>
             </div>
           ))
@@ -210,17 +253,17 @@ const LiveChat = ({ streamId, userId, userName = 'Guest' }) => {
         <div ref={commentsEndRef} />
       </div>
       
-      <form className="comment-form" onSubmit={sendComment}>
+      <form className="comment-form" onSubmit={handleSendComment}>
         <input
           type="text"
           value={newComment}
           onChange={(e) => setNewComment(e.target.value)}
-          placeholder={isLoggedIn ? "Type your comment..." : "Login to comment..."}
-          disabled={!isLoggedIn || !isConnected}
+          placeholder="Type your comment..."
+          disabled={!isConnected}
         />
         <button 
           type="submit" 
-          disabled={!isLoggedIn || !newComment.trim() || !isConnected}
+          disabled={!newComment.trim() || !isConnected}
         >
           Send
         </button>
