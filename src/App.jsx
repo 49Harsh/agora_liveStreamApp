@@ -16,8 +16,8 @@ import {
   addUserJoinedListener
 } from './socketConfig';
 
-// const BACKEND_URL = 'https://api.vedaz.io'; // Updated to the correct backend URL
-const BACKEND_URL = 'http://localhost:5050';
+const BACKEND_URL = 'https://api.vedaz.io';
+// const BACKEND_URL = 'http://localhost:5050';
 
 const App = () => {
   const appId = '9b8eb3c1d1eb4e35abdb4c9268bd2d16';

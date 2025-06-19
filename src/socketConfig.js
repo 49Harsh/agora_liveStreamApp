@@ -6,7 +6,7 @@ let socket = null;
 // Define API URL based on environment
 // const SOCKET_URL = 'https://api.vedaz.io'; // For production
 // Use this for local development
-const SOCKET_URL = 'ws://localhost:9000'; 
+const SOCKET_URL = 'ws://localhost:9000';
 
 /**
  * Initialize and connect to Socket.IO server
@@ -257,4 +257,45 @@ export const addViewerCountListener = (callback) => {
   return () => {
     socketInstance.off('viewerCount');
   };
+};
+
+/**
+ * Fetch current viewer count for a stream
+ * @param {string} channelId - The channel ID to fetch viewer count for
+ * @returns {Promise} - Promise that resolves with viewer count data
+ */
+export const fetchViewerCount = (channelId) => {
+  return new Promise((resolve, reject) => {
+    const socketInstance = getSocket();
+    
+    if (!socketInstance) {
+      console.error('Socket not initialized, cannot fetch viewer count');
+      reject(new Error('Socket not initialized'));
+      return;
+    }
+    
+    try {
+      console.log(`Socket: Requesting viewer count for channel ${channelId}`);
+      
+      // Request viewer count via socket
+      socketInstance.emit('getViewerCount', { channelId });
+      
+      // Set up a one-time listener for the response
+      socketInstance.once('viewerCount', (data) => {
+        console.log('Socket: Received viewer count:', data);
+        resolve({
+          activeViewers: data.activeViewers || 0,
+          totalViews: data.totalViews || 0
+        });
+      });
+      
+      // Set timeout in case we don't get a response
+      setTimeout(() => {
+        reject(new Error('Viewer count request timed out'));
+      }, 5000);
+    } catch (error) {
+      console.error('Error fetching viewer count:', error);
+      reject(error);
+    }
+  });
 }; 

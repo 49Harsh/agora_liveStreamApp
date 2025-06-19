@@ -79,22 +79,24 @@
 
 .comment {
   padding: 8px;
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: rgba(255, 255, 255, 0.2);
   border-radius: 8px;
   animation: slideIn 0.2s ease-out;
   max-width: 90%;
   align-self: flex-start;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 /* Style for local comments (user's own messages) */
 .local-comment {
-  background-color: rgba(103, 58, 183, 0.3);
+  background-color: rgba(103, 58, 183, 0.4);
   align-self: flex-end;
   border-top-right-radius: 0;
+  border: 1px solid rgba(103, 58, 183, 0.5);
 }
 
 .local-comment .comment-user {
-  color: #b19ddb;
+  color: #d0c0f0;
 }
 
 @keyframes slideIn {
@@ -103,37 +105,39 @@
 }
 
 .system-message {
-  background-color: rgba(0, 0, 0, 0.3);
-  color: rgba(255, 255, 255, 0.7);
+  background-color: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.8);
   padding: 4px 12px;
   font-size: 12px;
   text-align: center;
   align-self: center;
   max-width: 80%;
   border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .comment-user {
   font-weight: bold;
   margin-bottom: 4px;
-  color: #a5c5ff;
+  color: #bfdbff;
 }
 
 .comment-content {
   color: white;
   word-break: break-word;
+  font-size: 15px;
 }
 
 .comment-time {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.6);
   margin-top: 4px;
   text-align: right;
 }
 
 .no-comments {
   text-align: center;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.7);
   padding: 20px;
   font-style: italic;
 }
@@ -148,12 +152,13 @@
 .comment-form input {
   flex: 1;
   padding: 10px;
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: rgba(255, 255, 255, 0.15);
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 4px;
   color: white;
   outline: none;
   margin-right: 8px;
+  font-size: 14px;
 }
 
 .comment-form input:focus {
